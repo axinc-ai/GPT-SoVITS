@@ -310,6 +310,7 @@ class SSLModel(nn.Module):
         return self.ssl.model(ref_audio_16k)["last_hidden_state"].transpose(1, 2)
 
     def export(self, ref_audio_16k, project_name):
+        self.ssl.model.eval()
         torch.onnx.export(
             self,
             (ref_audio_16k),
@@ -334,11 +335,13 @@ def export(vits_path, gpt_path, project_name):
     #text_seq = torch.LongTensor([cleaned_text_to_sequence(["w", "o3", "sh", "i4", "b", "ai2", "y", "e4", "w", "o3", "sh", "i4", "b", "ai2", "y", "e4", "w", "o3", "sh", "i4", "b", "ai2", "y", "e4"])])
     ref_seq = torch.LongTensor([cleaned_text_to_sequence(['m', 'i', 'z', 'u', 'o', 'm', 'a', 'r', 'e', 'e', 'sh', 'i', 'a', 'k', 'a', 'r', 'a', 'k', 'a', 'w', 'a', 'n', 'a', 'k', 'U', 't', 'e', 'w', 'a', 'n', 'a', 'r', 'a', 'n', 'a', 'i', '.'])])
     text_seq = torch.LongTensor([cleaned_text_to_sequence(['m', 'i', 'z', 'u', 'w', 'a', ',', 'i', 'r', 'i', 'm', 'a', 's', 'e', 'N', 'k', 'a', '?'])])
+    text_seq = torch.LongTensor([cleaned_text_to_sequence(['ky', 'o', 'o', 'w', 'a', 'h', 'a', 'r', 'e', 'd', 'e', 'sh', 'o', 'o', 'k', 'a', '?'])])
+   
     ref_bert = torch.randn((ref_seq.shape[1], 1024)).float()
     text_bert = torch.randn((text_seq.shape[1], 1024)).float()
     ref_audio = torch.randn((1, 48000 * 5)).float()
 
-    ref_audio = torch.tensor([load_audio("/Users/kyakuno/Desktop/大阪万博/voices/JSUT.wav", 48000)]).float()
+    ref_audio = torch.tensor([load_audio("JSUT.wav", 48000)]).float()
     ref_audio_16k = torchaudio.functional.resample(ref_audio,48000,16000).float()
     ref_audio_sr = torchaudio.functional.resample(ref_audio,48000,vits.hps.data.sampling_rate).float()
 
