@@ -331,17 +331,21 @@ def export(vits_path, gpt_path, project_name):
     gpt = T2SModel(gpt_path, vits)
     gpt_sovits = GptSoVits(vits, gpt)
     ssl = SSLModel()
+
     #ref_seq = torch.LongTensor([cleaned_text_to_sequence(["n", "i2", "h", "ao3", ",", "w", "o3", "sh", "i4", "b", "ai2", "y", "e4"])])
     #text_seq = torch.LongTensor([cleaned_text_to_sequence(["w", "o3", "sh", "i4", "b", "ai2", "y", "e4", "w", "o3", "sh", "i4", "b", "ai2", "y", "e4", "w", "o3", "sh", "i4", "b", "ai2", "y", "e4"])])
+
     ref_seq = torch.LongTensor([cleaned_text_to_sequence(['m', 'i', 'z', 'u', 'o', 'm', 'a', 'r', 'e', 'e', 'sh', 'i', 'a', 'k', 'a', 'r', 'a', 'k', 'a', 'w', 'a', 'n', 'a', 'k', 'U', 't', 'e', 'w', 'a', 'n', 'a', 'r', 'a', 'n', 'a', 'i', '.'])])
     text_seq = torch.LongTensor([cleaned_text_to_sequence(['m', 'i', 'z', 'u', 'w', 'a', ',', 'i', 'r', 'i', 'm', 'a', 's', 'e', 'N', 'k', 'a', '?'])])
+    
+    ref_seq = torch.LongTensor([cleaned_text_to_sequence(['a', 'a', 'r', 'u', 'b', 'u', 'i', 'sh', 'i', 'i', 'o', 'sh', 'i', 'y', 'o', 'o', 'sh', 'I', 't', 'a', 'b', 'o', 'i', 's', 'U', 'ch', 'e', 'N', 'j', 'a', 'a', 'o', 'ts', 'U', 'k', 'u', 'r', 'u', '.'])])
     text_seq = torch.LongTensor([cleaned_text_to_sequence(['ky', 'o', 'o', 'w', 'a', 'h', 'a', 'r', 'e', 'd', 'e', 'sh', 'o', 'o', 'k', 'a', '?'])])
    
     ref_bert = torch.randn((ref_seq.shape[1], 1024)).float()
     text_bert = torch.randn((text_seq.shape[1], 1024)).float()
     ref_audio = torch.randn((1, 48000 * 5)).float()
 
-    ref_audio = torch.tensor([load_audio("JSUT.wav", 48000)]).float()
+    ref_audio = torch.tensor([load_audio("kyakuno.wav", 48000)]).float()
     ref_audio_16k = torchaudio.functional.resample(ref_audio,48000,16000).float()
     ref_audio_sr = torchaudio.functional.resample(ref_audio,48000,vits.hps.data.sampling_rate).float()
 
@@ -350,39 +354,43 @@ def export(vits_path, gpt_path, project_name):
     except:
         pass
 
-    debug = True
-    ssl_content = ssl(ref_audio_16k, debug=debug).float()
+    onnx_export = False
+    onnx_import = True
 
-    if debug:
-        a, b = gpt_sovits(ref_seq, text_seq, ref_bert, text_bert, ref_audio_sr, ssl_content, debug=debug)
+    ssl_content = ssl(ref_audio_16k, debug=onnx_import).float()
+
+    if onnx_import:
+        a, b = gpt_sovits(ref_seq, text_seq, ref_bert, text_bert, ref_audio_sr, ssl_content, debug=onnx_import)
         soundfile.write("out1.wav", a.cpu().detach().numpy(), vits.hps.data.sampling_rate)
         soundfile.write("out2.wav", b[0], vits.hps.data.sampling_rate)
         return
 
-    ssl.export(ref_audio_16k, project_name)
+    if onnx_export:
+        ssl.export(ref_audio_16k, project_name)
 
     a = gpt_sovits(ref_seq, text_seq, ref_bert, text_bert, ref_audio_sr, ssl_content).detach().cpu().numpy()
 
     soundfile.write("out.wav", a, vits.hps.data.sampling_rate)
 
-    gpt_sovits.export(ref_seq, text_seq, ref_bert, text_bert, ref_audio_sr, ssl_content, project_name)
+    if onnx_export:
+        gpt_sovits.export(ref_seq, text_seq, ref_bert, text_bert, ref_audio_sr, ssl_content, project_name)
 
-    MoeVSConf = {
-            "Folder" : f"{project_name}",
-            "Name" : f"{project_name}",
-            "Type" : "GPT-SoVits",
-            "Rate" : vits.hps.data.sampling_rate,
-            "NumLayers": gpt.t2s_model.num_layers,
-            "EmbeddingDim": gpt.t2s_model.embedding_dim,
-            "Dict": "BasicDict",
-            "BertPath": "chinese-roberta-wwm-ext-large",
-            "Symbol": symbols,
-            "AddBlank": False
-        }
-    
-    MoeVSConfJson = json.dumps(MoeVSConf)
-    with open(f"onnx/{project_name}.json", 'w') as MoeVsConfFile:
-        json.dump(MoeVSConf, MoeVsConfFile, indent = 4)
+        MoeVSConf = {
+                "Folder" : f"{project_name}",
+                "Name" : f"{project_name}",
+                "Type" : "GPT-SoVits",
+                "Rate" : vits.hps.data.sampling_rate,
+                "NumLayers": gpt.t2s_model.num_layers,
+                "EmbeddingDim": gpt.t2s_model.embedding_dim,
+                "Dict": "BasicDict",
+                "BertPath": "chinese-roberta-wwm-ext-large",
+                "Symbol": symbols,
+                "AddBlank": False
+            }
+        
+        MoeVSConfJson = json.dumps(MoeVSConf)
+        with open(f"onnx/{project_name}.json", 'w') as MoeVsConfFile:
+            json.dump(MoeVSConf, MoeVsConfFile, indent = 4)
 
 
 if __name__ == "__main__":

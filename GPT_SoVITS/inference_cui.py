@@ -646,8 +646,10 @@ with gr.Blocks(title="GPT-SoVITS WebUI") as app:
 #    quiet=True,
 #)
 
-inp_ref = "JSUT.wav"
-prompt_text = "水をマレーシアから買わなくてはならない。"
+#inp_ref = "JSUT.wav"
+#prompt_text = "水をマレーシアから買わなくてはならない。"
+inp_ref = "kyakuno.wav"
+prompt_text = "RVCを使用したボイスチェンジャーを作る。"
 prompt_language = i18n("日文")
 #text = "水は、いりませんか？"
 text = "今日は晴れでしょうか？"
