@@ -326,9 +326,6 @@ def get_tts_wav(ref_wav_path, prompt_text, prompt_language, text, text_language,
         dtype=np.float16 if is_half == True else np.float32,
     )
 
-    onnx_export = True
-    onnx_import = False
-
     with torch.no_grad():
         wav16k, sr = librosa.load(ref_wav_path, sr=16000)
         if (wav16k.shape[0] > 160000 or wav16k.shape[0] < 48000):
@@ -343,38 +340,15 @@ def get_tts_wav(ref_wav_path, prompt_text, prompt_language, text, text_language,
             zero_wav_torch = zero_wav_torch.to(device)
         wav16k = torch.cat([wav16k, zero_wav_torch])
         ssl_content_orig = ssl_model.model(wav16k.unsqueeze(0))
-        print(ssl_content_orig)
         ssl_content = ssl_content_orig[
             "last_hidden_state"
         ].transpose(
             1, 2
         )  # .float()
-        codes = vq_model.extract_latent(ssl_content)
-
-        if onnx_export:
-            print("ssl_model wav16k", wav16k.unsqueeze(0).shape) # torch.Size([1, 60641])
-            print("ssl_content_orig [0]", ssl_content_orig[0].shape) # torch.Size([1, 189, 768])
-            torch.onnx.export(
-                ssl_model.model,
-                (wav16k.unsqueeze(0)),
-                "ssl_model.onnx",
-                input_names=["wav16k"],
-                output_names=["last_hidden_state"],
-                dynamic_axes={
-                    "wav16k": [1],
-                    "ssl_content": [1]
-                },
-                verbose=False, opset_version=15
-            )
-
-        #if onnx_import:
-        #    print("Impot encodec from onnx")
-        #    vnet = ailia.Net(weight="encodec.onnx", env_id = 1, memory_mode = 11)
-        #    encoded_frames = vnet.run([wav.numpy()])[0]
-        #    encoded_frames = torch.from_numpy(encoded_frames)
-        #    encoded_frames = [[encoded_frames]]
-   
+        print("ssl_content", ssl_content)
+        codes = vq_model.extract_latent(ssl_content) 
         prompt_semantic = codes[0, 0]
+        print("prompt_semantic", prompt_semantic)
     t1 = ttime()
 
     if (how_to_cut == i18n("凑四句一切")):
@@ -415,6 +389,10 @@ def get_tts_wav(ref_wav_path, prompt_text, prompt_language, text, text_language,
         all_phoneme_len = torch.tensor([all_phoneme_ids.shape[-1]]).to(device)
         prompt = prompt_semantic.unsqueeze(0).to(device)
         t2 = ttime()
+        print(phones1)
+        print(phones2)
+        print(all_phoneme_ids)
+        print(bert)
         with torch.no_grad():
             # pred_semantic = t2s_model.model.infer(
             pred_semantic, idx = t2s_model.model.infer_panel(
@@ -646,13 +624,13 @@ with gr.Blocks(title="GPT-SoVITS WebUI") as app:
 #    quiet=True,
 #)
 
-#inp_ref = "JSUT.wav"
-#prompt_text = "水をマレーシアから買わなくてはならない。"
-inp_ref = "kyakuno.wav"
-prompt_text = "RVCを使用したボイスチェンジャーを作る。"
+inp_ref = "JSUT.wav"
+prompt_text = "水をマレーシアから買わなくてはならない。"
+#inp_ref = "kyakuno.wav"
+#prompt_text = "RVCを使用したボイスチェンジャーを作る。"
 prompt_language = i18n("日文")
 #text = "水は、いりませんか？"
-text = "今日は晴れでしょうか？"
+text = "ゆずきゆかりが好きだ！"
 text_language = i18n("日文")
 how_to_cut = i18n("凑四句一切")
 top_k = 5
@@ -663,4 +641,4 @@ output = get_tts_wav(inp_ref, prompt_text, prompt_language, text, text_language,
 # get_tts_wavのyieldをreturnに書き換える
 print(output)
 import soundfile as sf
-sf.write("x.wav", output[1], output[0])
+sf.write("out.wav", output[1], output[0])
