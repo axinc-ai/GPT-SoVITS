@@ -10,10 +10,9 @@ from AR.modules.transformer_onnx import TransformerEncoderLayer
 from torch import nn
 from torch.nn import functional as F
 from torchmetrics.classification import MulticlassAccuracy
-from AR.models.utils import top_k_top_p_filtering
 
 debug_dump = True
-debug_trace = True
+debug_trace = False # 完全一致のためにonnxに変換できないオペレータを使う
 
 default_config = {
     "embedding_dim": 512,
@@ -114,7 +113,7 @@ class OnnxEncoder(nn.Module):
 
 class T2SFirstStageDecoder(nn.Module):
     def __init__(self, ar_audio_embedding, ar_audio_position, h, ar_predict_layer, loss_fct, ar_accuracy_metric,
-    top_k, early_stop_num, num_layers):
+    early_stop_num, num_layers):
         super().__init__()
         self.ar_audio_embedding = ar_audio_embedding
         self.ar_audio_position = ar_audio_position
@@ -122,11 +121,10 @@ class T2SFirstStageDecoder(nn.Module):
         self.ar_predict_layer = ar_predict_layer
         self.loss_fct = loss_fct
         self.ar_accuracy_metric = ar_accuracy_metric
-        self.top_k = top_k
         self.early_stop_num = early_stop_num
         self.num_layers = num_layers
     
-    def forward(self, x, prompt):
+    def forward(self, x, prompt, top_k, top_p, temperature, repetition_penalty):
         y = prompt
         x_example = x[:,:,0] * 0.0
         #N, 1, 512
@@ -168,7 +166,7 @@ class T2SFirstStageDecoder(nn.Module):
         logits = self.ar_predict_layer(xy_dec[:, -1])
         logits = logits[:, :-1]  ###刨除1024终止符号的概率
 
-        samples = sample(logits[0], y, top_k=self.top_k, top_p=1.0, repetition_penalty=1.35)[0].unsqueeze(0)
+        samples = sample(logits[0], y, top_k=top_k, top_p=top_p, temperature=temperature, repetition_penalty=repetition_penalty)[0].unsqueeze(0)
 
         if debug_dump:
             print("-------", 0)
@@ -183,7 +181,7 @@ class T2SFirstStageDecoder(nn.Module):
 
 class T2SStageDecoder(nn.Module):
     def __init__(self, ar_audio_embedding, ar_audio_position, h, ar_predict_layer, loss_fct, ar_accuracy_metric,
-    top_k, early_stop_num, num_layers):
+     early_stop_num, num_layers):
         super().__init__()
         self.ar_audio_embedding = ar_audio_embedding
         self.ar_audio_position = ar_audio_position
@@ -191,12 +189,11 @@ class T2SStageDecoder(nn.Module):
         self.ar_predict_layer = ar_predict_layer
         self.loss_fct = loss_fct
         self.ar_accuracy_metric = ar_accuracy_metric
-        self.top_k = top_k
         self.early_stop_num = early_stop_num
         self.num_layers = num_layers
         self.idx = 1
 
-    def forward(self, y, k, v, y_emb, x_example):
+    def forward(self, y, k, v, y_emb, x_example, top_k, top_p, temperature, repetition_penalty):
         cache = {
             "all_stage": self.num_layers,
             "k": torch.nn.functional.pad(k, (0, 0, 0, 0, 0, 1)),
@@ -221,7 +218,7 @@ class T2SStageDecoder(nn.Module):
 
         xy_dec = self.h(xy_pos, mask=xy_attn_mask, cache=cache)
         logits = self.ar_predict_layer(xy_dec[:, -1])
-        samples = sample(logits[0], y, top_k=self.top_k, top_p=1.0, repetition_penalty=1.35)[0].unsqueeze(0)
+        samples = sample(logits[0], y, top_k=top_k, top_p=top_p, temperature=temperature, repetition_penalty=repetition_penalty)[0].unsqueeze(0)
 
         if self.idx < 3 and debug_dump:
             print("-------", self.idx)
@@ -281,22 +278,22 @@ class Text2SemanticDecoder(nn.Module):
     def init_onnx(self):
         self.onnx_encoder = OnnxEncoder(self.ar_text_embedding, self.bert_proj, self.ar_text_position)
         self.first_stage_decoder = T2SFirstStageDecoder(self.ar_audio_embedding, self.ar_audio_position, self.h, 
-            self.ar_predict_layer, self.loss_fct, self.ar_accuracy_metric, self.top_k, self.early_stop_num,
+            self.ar_predict_layer, self.loss_fct, self.ar_accuracy_metric, self.early_stop_num,
             self.num_layers)
         self.stage_decoder = T2SStageDecoder(self.ar_audio_embedding, self.ar_audio_position, self.h, 
-            self.ar_predict_layer, self.loss_fct, self.ar_accuracy_metric, self.top_k, self.early_stop_num,
+            self.ar_predict_layer, self.loss_fct, self.ar_accuracy_metric, self.early_stop_num,
             self.num_layers)
 
-    def forward(self, x, prompts, bert_feature):
+    def forward(self, x, prompts, bert_feature, top_k, top_p, temperature, repetition_penalty):
         early_stop_num = self.early_stop_num
         prefix_len = prompts.shape[1]
 
         x = self.onnx_encoder(x, bert_feature)
-        y, k, v, y_emb, stage, x_example = self.first_stage_decoder(x, prompts)
+        y, k, v, y_emb, stage, x_example = self.first_stage_decoder(x, prompts, top_k, top_p, temperature, repetition_penalty)
 
         stop = False
         for idx in range(1, 1500):
-            enco = self.stage_decoder(y, k, v, y_emb, stage, x_example)
+            enco = self.stage_decoder(y, k, v, y_emb, stage, x_example, top_k, top_p, temperature, repetition_penalty)
             y, k, v, y_emb, stage, logits, samples = enco
             if early_stop_num != -1 and (y.shape[1] - prefix_len) > early_stop_num:
                 stop = True

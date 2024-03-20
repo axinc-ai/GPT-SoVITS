@@ -23,8 +23,8 @@ import json
 debug_dump = True
 debug_trace = False # 完全一致のためにtopKを1に固定する
 
-onnx_export = False
-onnx_import = True
+onnx_export = True
+onnx_import = False
 
 def spectrogram_torch(y, n_fft, sampling_rate, hop_size, win_size, center=False):
     hann_window = torch.hann_window(win_size).to(
@@ -120,8 +120,16 @@ class T2SModel(nn.Module):
         self.stage_decoder = self.t2s_model.stage_decoder
         #self.t2s_model = torch.jit.script(self.t2s_model)
 
-    def forward(self, ref_seq, text_seq, ref_bert, text_bert, ssl_content, debug=False):
+    def forward(self, ref_seq, text_seq, ref_bert, text_bert, ssl_content):
         early_stop_num = self.t2s_model.early_stop_num
+
+        top_k = torch.LongTensor([5])
+        if debug_trace:
+            top_p = torch.Tensor([1.0])
+        else:
+            top_p = torch.Tensor([0.95])
+        temperature = torch.Tensor([1.0])
+        repetition_penalty = torch.Tensor([1.35])
 
         if debug_dump:
             print(ref_seq)
@@ -129,14 +137,14 @@ class T2SModel(nn.Module):
             print(ref_bert)
             print(text_bert)
 
-        if debug:
+        if onnx_import:
             import onnxruntime
             sess_encoder = onnxruntime.InferenceSession(f"onnx/nahida/nahida_t2s_encoder.onnx", providers=["CPU"])
             sess_fsdec = onnxruntime.InferenceSession(f"onnx/nahida/nahida_t2s_fsdec.onnx", providers=["CPU"])
             sess_sdec = onnxruntime.InferenceSession(f"onnx/nahida/nahida_t2s_sdec.onnx", providers=["CPU"])
 
         #[1,N] [1,N] [N, 1024] [N, 1024] [1, 768, N]
-        if debug:
+        if onnx_import:
             x, prompts = sess_encoder.run(None, {"ref_seq":ref_seq.detach().numpy(), "text_seq":text_seq.detach().numpy(), "ref_bert":ref_bert.detach().numpy(), "text_bert":text_bert.detach().numpy(), "ssl_content":ssl_content.detach().numpy()})
             x = torch.from_numpy(x)
             prompts = torch.from_numpy(prompts)
@@ -149,21 +157,21 @@ class T2SModel(nn.Module):
         prefix_len = prompts.shape[1]
 
         #[1,N,512] [1,N]
-        if debug:
-            y, k, v, y_emb, x_example = sess_fsdec.run(None, {"x":x.detach().numpy(), "prompts":prompts.detach().numpy()})
+        if onnx_import:
+            y, k, v, y_emb, x_example = sess_fsdec.run(None, {"x":x.detach().numpy(), "prompts":prompts.detach().numpy(), "top_k":top_k.detach().numpy(), "top_p":top_p.detach().numpy(), "temperature":temperature.detach().numpy(), "repetition_penalty":repetition_penalty.detach().numpy()})
             y = torch.from_numpy(y)
             k = torch.from_numpy(k)
             v = torch.from_numpy(v)
             y_emb = torch.from_numpy(y_emb)
             x_example = torch.from_numpy(x_example)
         else:
-            y, k, v, y_emb, x_example = self.first_stage_decoder(x, prompts)
+            y, k, v, y_emb, x_example = self.first_stage_decoder(x, prompts, top_k, top_p, temperature, repetition_penalty)
 
         stop = False
         for idx in range(1, 1500):
             #[1, N] [N_layer, N, 1, 512] [N_layer, N, 1, 512] [1, N, 512] [1] [1, N, 512] [1, N]
-            if debug:
-                y, k, v, y_emb, logits, samples = sess_sdec.run(None, {"iy":y.detach().numpy(), "ik":k.detach().numpy(), "iv":v.detach().numpy(), "iy_emb":y_emb.detach().numpy(), "ix_example":x_example.detach().numpy()})
+            if onnx_import:
+                y, k, v, y_emb, logits, samples = sess_sdec.run(None, {"iy":y.detach().numpy(), "ik":k.detach().numpy(), "iv":v.detach().numpy(), "iy_emb":y_emb.detach().numpy(), "ix_example":x_example.detach().numpy(), "top_k":top_k.detach().numpy(), "top_p":top_p.detach().numpy(), "temperature":temperature.detach().numpy(), "repetition_penalty":repetition_penalty.detach().numpy()})
                 y = torch.from_numpy(y)
                 k = torch.from_numpy(k)
                 v = torch.from_numpy(v)
@@ -171,7 +179,7 @@ class T2SModel(nn.Module):
                 logits = torch.from_numpy(logits)
                 samples = torch.from_numpy(samples)
             else:
-                enco = self.stage_decoder(y, k, v, y_emb, x_example)
+                enco = self.stage_decoder(y, k, v, y_emb, x_example, top_k, top_p, temperature, repetition_penalty)
                 y, k, v, y_emb, logits, samples = enco
             if early_stop_num != -1 and (y.shape[1] - prefix_len) > early_stop_num:
                 stop = True
@@ -185,6 +193,14 @@ class T2SModel(nn.Module):
         return y[:, -idx:-1].unsqueeze(0) # added -1 for matching torch
 
     def export(self, ref_seq, text_seq, ref_bert, text_bert, ssl_content, project_name, dynamo=False):
+        top_k = torch.LongTensor([5])
+        if debug_trace:
+            top_p = torch.Tensor([1.0])
+        else:
+            top_p = torch.Tensor([0.95])
+        temperature = torch.Tensor([1.0])
+        repetition_penalty = torch.Tensor([1.35])
+
         #self.onnx_encoder = torch.jit.script(self.onnx_encoder)
         if dynamo:
             export_options = torch.onnx.ExportOptions(dynamic_shapes=True)
@@ -215,9 +231,9 @@ class T2SModel(nn.Module):
 
         torch.onnx.export(
             self.first_stage_decoder,
-            (x, prompts),
+            (x, prompts, top_k, top_p, temperature, repetition_penalty),
             f"onnx/{project_name}/{project_name}_t2s_fsdec.onnx",
-            input_names=["x", "prompts"],
+            input_names=["x", "prompts", "top_k", "top_p", "temperature", "repetition_penalty"],
             output_names=["y", "k", "v", "y_emb", "x_example"],
             dynamic_axes={
                 "x": {1 : "x_length"},
@@ -226,13 +242,13 @@ class T2SModel(nn.Module):
             verbose=False,
             opset_version=16
         )
-        y, k, v, y_emb, x_example = self.first_stage_decoder(x, prompts)
+        y, k, v, y_emb, x_example = self.first_stage_decoder(x, prompts, top_k, top_p, temperature, repetition_penalty)
 
         torch.onnx.export(
             self.stage_decoder,
-            (y, k, v, y_emb, x_example),
+            (y, k, v, y_emb, x_example, top_k, top_p, temperature, repetition_penalty),
             f"onnx/{project_name}/{project_name}_t2s_sdec.onnx",
-            input_names=["iy", "ik", "iv", "iy_emb", "ix_example"],
+            input_names=["iy", "ik", "iv", "iy_emb", "ix_example", "top_k", "top_p", "temperature", "repetition_penalty"],
             output_names=["y", "k", "v", "y_emb", "logits", "samples"],
             dynamic_axes={
                 "iy": {1 : "iy_length"},
@@ -283,14 +299,14 @@ class GptSoVits(nn.Module):
         self.vits = vits
         self.t2s = t2s
     
-    def forward(self, ref_seq, text_seq, ref_bert, text_bert, ref_audio, ssl_content, debug=False):
-        pred_semantic = self.t2s(ref_seq, text_seq, ref_bert, text_bert, ssl_content, debug)
+    def forward(self, ref_seq, text_seq, ref_bert, text_bert, ref_audio, ssl_content):
+        pred_semantic = self.t2s(ref_seq, text_seq, ref_bert, text_bert, ssl_content)
         if debug_dump:
             print("pred_semantic", pred_semantic)
         audio = self.vits(text_seq, pred_semantic, ref_audio)
         if debug_dump:
             print("audio", audio)
-        if debug:
+        if onnx_import:
             import onnxruntime
             sess = onnxruntime.InferenceSession("onnx/nahida/nahida_vits.onnx", providers=["CPU"])
             audio1 = sess.run(None, {
@@ -325,8 +341,8 @@ class SSLModel(nn.Module):
         super().__init__()
         self.ssl = ssl_model
 
-    def forward(self, ref_audio_16k, debug = False):
-        if debug:
+    def forward(self, ref_audio_16k):
+        if onnx_import:
             import onnxruntime
             sess = onnxruntime.InferenceSession("onnx/nahida/nahida_cnhubert.onnx", providers=["CPU"])
             last_hidden_state = sess.run(None, {
@@ -394,12 +410,12 @@ def export(vits_path, gpt_path, project_name):
     except:
         pass
 
-    ssl_content = ssl(ref_audio_16k, debug=onnx_import).float()
+    ssl_content = ssl(ref_audio_16k).float()
     if debug_dump:
         print("ssl_content", ssl_content)
 
     if onnx_import:
-        a, b = gpt_sovits(ref_seq, text_seq, ref_bert, text_bert, ref_audio_sr, ssl_content, debug=onnx_import)
+        a, b = gpt_sovits(ref_seq, text_seq, ref_bert, text_bert, ref_audio_sr, ssl_content)
         soundfile.write("out1.wav", a.cpu().detach().numpy(), vits.hps.data.sampling_rate)
         soundfile.write("out2.wav", b[0], vits.hps.data.sampling_rate)
         return
