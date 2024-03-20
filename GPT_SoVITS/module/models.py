@@ -16,6 +16,8 @@ from module.quantize import ResidualVectorQuantizer
 from text import symbols
 from torch.cuda.amp import autocast
 
+debug_dump = True
+
 
 class StochasticDurationPredictor(nn.Module):
     def __init__(
@@ -965,7 +967,12 @@ class SynthesizerTrn(nn.Module):
             refer_mask = torch.unsqueeze(
                 commons.sequence_mask(refer_lengths, refer.size(2)), 1
             ).to(refer.dtype)
+            if debug_dump:
+                print("refer_mask", refer_mask, refer_mask.shape)
             ge = self.ref_enc(refer * refer_mask, refer_mask)
+
+        #if debug_dump:
+        #    print("vq ge", ge)
 
         y_lengths = torch.LongTensor([codes.size(2) * 2]).to(codes.device)
         text_lengths = torch.LongTensor([text.size(-1)]).to(text.device)
@@ -979,6 +986,11 @@ class SynthesizerTrn(nn.Module):
         x, m_p, logs_p, y_mask = self.enc_p(
             quantized, y_lengths, text, text_lengths, ge
         )
+
+        if debug_dump:
+            print("m_p", m_p)
+            print("logs_p", logs_p)
+
         z_p = m_p + torch.randn_like(m_p) * torch.exp(logs_p) * noise_scale
 
         z = self.flow(z_p, y_mask, g=ge, reverse=True)

@@ -10,6 +10,10 @@ from AR.modules.transformer_onnx import TransformerEncoderLayer
 from torch import nn
 from torch.nn import functional as F
 from torchmetrics.classification import MulticlassAccuracy
+from AR.models.utils import top_k_top_p_filtering
+
+debug_dump = True
+debug_trace = True
 
 default_config = {
     "embedding_dim": 512,
@@ -68,7 +72,12 @@ def logits_to_probs(
 def multinomial_sample_one_no_sync(
     probs_sort
 ):  # Does multinomial sampling without a cuda synchronization
-    q = torch.randn_like(probs_sort)
+    #q = torch.randn_like(probs_sort) # original
+    if debug_trace:
+        q = torch.empty_like(probs_sort).exponential_(1) # fixed by ax
+    else:
+        lambda_ = 1.0
+        q = -torch.log(torch.rand_like(probs_sort)) / lambda_ # support onnx export
     return torch.argmax(probs_sort / q, dim=-1, keepdim=True).to(dtype=torch.int)
 
 
@@ -92,8 +101,14 @@ class OnnxEncoder(nn.Module):
         self.ar_text_position = ar_text_position
     
     def forward(self, x, bert_feature):
+        if debug_dump:
+            print("input token x", x)
         x = self.ar_text_embedding(x)
+        if debug_dump:
+            print("ar_text_embedding x", x)
         x = x + self.bert_proj(bert_feature.transpose(1, 2))
+        if debug_dump:
+            print("bert_proj x", x)
         return self.ar_text_position(x)
 
 
@@ -151,7 +166,15 @@ class T2SFirstStageDecoder(nn.Module):
 
         xy_dec = self.h(xy_pos, mask=xy_attn_mask, cache=cache)
         logits = self.ar_predict_layer(xy_dec[:, -1])
+        logits = logits[:, :-1]  ###刨除1024终止符号的概率
+
         samples = sample(logits[0], y, top_k=self.top_k, top_p=1.0, repetition_penalty=1.35)[0].unsqueeze(0)
+
+        if debug_dump:
+            print("-------", 0)
+            print("logits.shape", logits[0].shape)
+            print("logits", logits[0])
+            print("samples", samples)
 
         y = torch.concat([y, samples], dim=1)
 
@@ -171,6 +194,7 @@ class T2SStageDecoder(nn.Module):
         self.top_k = top_k
         self.early_stop_num = early_stop_num
         self.num_layers = num_layers
+        self.idx = 1
 
     def forward(self, y, k, v, y_emb, x_example):
         cache = {
@@ -198,6 +222,13 @@ class T2SStageDecoder(nn.Module):
         xy_dec = self.h(xy_pos, mask=xy_attn_mask, cache=cache)
         logits = self.ar_predict_layer(xy_dec[:, -1])
         samples = sample(logits[0], y, top_k=self.top_k, top_p=1.0, repetition_penalty=1.35)[0].unsqueeze(0)
+
+        if self.idx < 3 and debug_dump:
+            print("-------", self.idx)
+            print("logits.shape", logits[0].shape)
+            print("logits", logits[0])
+            print("samples", samples)
+            self.idx = self.idx + 1
 
         y = torch.concat([y, samples], dim=1)
 

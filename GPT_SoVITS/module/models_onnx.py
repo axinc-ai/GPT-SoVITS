@@ -16,6 +16,8 @@ from module.quantize import ResidualVectorQuantizer
 from text import symbols
 from torch.cuda.amp import autocast
 
+debug_dump = True
+
 
 class StochasticDurationPredictor(nn.Module):
     def __init__(
@@ -892,9 +894,16 @@ class SynthesizerTrn(nn.Module):
             # self.enc_p.encoder_text.requires_grad_(False)
             # self.enc_p.mrte.requires_grad_(False)
 
-    def forward(self, codes, text, refer):
+    def forward(self, codes, text, refer, noise_scale=0.5):
         refer_mask = torch.ones_like(refer[:1,:1,:])
+
+        if debug_dump:
+            print("refer_mask", refer_mask, refer_mask.shape)
+
         ge = self.ref_enc(refer * refer_mask, refer_mask)
+
+        #if debug_dump:
+        #    print("vq ge", ge)
 
         quantized = self.quantizer.decode(codes)
         if self.semantic_frame_rate == "25hz":
@@ -904,8 +913,13 @@ class SynthesizerTrn(nn.Module):
         x, m_p, logs_p, y_mask = self.enc_p(
             quantized, text, ge
         )
+
+        if debug_dump:
+            print("m_p", m_p)
+            print("logs_p", logs_p)
         
-        z_p = m_p + torch.randn_like(m_p) * torch.exp(logs_p)
+        #z_p = m_p + torch.randn_like(m_p) * torch.exp(logs_p) # original
+        z_p = m_p + torch.randn_like(m_p) * torch.exp(logs_p) * noise_scale # fixed by ax
 
         z = self.flow(z_p, y_mask, g=ge, reverse=True)
 

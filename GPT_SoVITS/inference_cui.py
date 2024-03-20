@@ -17,6 +17,8 @@ logging.getLogger("charset_normalizer").setLevel(logging.ERROR)
 logging.getLogger("torchaudio._extension").setLevel(logging.ERROR)
 import pdb
 
+debug_dump = True
+
 if os.path.exists("./gweight.txt"):
     with open("./gweight.txt", 'r', encoding="utf-8") as file:
         gweight_data = file.read()
@@ -389,10 +391,11 @@ def get_tts_wav(ref_wav_path, prompt_text, prompt_language, text, text_language,
         all_phoneme_len = torch.tensor([all_phoneme_ids.shape[-1]]).to(device)
         prompt = prompt_semantic.unsqueeze(0).to(device)
         t2 = ttime()
-        print(phones1)
-        print(phones2)
-        print(all_phoneme_ids)
-        print(bert)
+        if debug_dump:
+            print(phones1)
+            print(phones2)
+            print(all_phoneme_ids)
+            print(bert)
         with torch.no_grad():
             # pred_semantic = t2s_model.model.infer(
             pred_semantic, idx = t2s_model.model.infer_panel(
@@ -411,12 +414,17 @@ def get_tts_wav(ref_wav_path, prompt_text, prompt_language, text, text_language,
         pred_semantic = pred_semantic[:, -idx:].unsqueeze(
             0
         )  # .unsqueeze(0)#mq要多unsqueeze一次
+        if debug_dump:
+            print("pred_semantic", pred_semantic)
         refer = get_spepc(hps, ref_wav_path)  # .to(device)
         if is_half == True:
             refer = refer.half().to(device)
         else:
             refer = refer.to(device)
         # audio = vq_model.decode(pred_semantic, all_phoneme_ids, refer).detach().cpu().numpy()[0, 0]
+        if debug_dump:
+            print("refer", refer)
+            print("phones2", phones2)
         audio = (
             vq_model.decode(
                 pred_semantic, torch.LongTensor(phones2).to(device).unsqueeze(0), refer
@@ -425,6 +433,8 @@ def get_tts_wav(ref_wav_path, prompt_text, prompt_language, text, text_language,
                 .cpu()
                 .numpy()[0, 0]
         )  ###试试重建不带上prompt部分
+        if debug_dump:
+            print("audio", audio)
         max_audio=np.abs(audio).max()#简单防止16bit爆音
         if max_audio>1:audio/=max_audio
         audio_opt.append(audio)

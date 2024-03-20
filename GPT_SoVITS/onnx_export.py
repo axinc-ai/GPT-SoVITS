@@ -20,6 +20,12 @@ from my_utils import load_audio
 import os
 import json
 
+debug_dump = True
+debug_trace = False # 完全一致のためにtopKを1に固定する
+
+onnx_export = False
+onnx_import = True
+
 def spectrogram_torch(y, n_fft, sampling_rate, hop_size, win_size, center=False):
     hann_window = torch.hann_window(win_size).to(
             dtype=y.dtype, device=y.device
@@ -83,6 +89,8 @@ class T2SEncoder(nn.Module):
     def forward(self, ref_seq, text_seq, ref_bert, text_bert, ssl_content):
         codes = self.vits.extract_latent(ssl_content)
         prompt_semantic = codes[0, 0]
+        if debug_dump:
+            print("prompt_semantic", prompt_semantic)
         bert = torch.cat([ref_bert.transpose(0, 1), text_bert.transpose(0, 1)], 1)
         all_phoneme_ids = torch.cat([ref_seq, text_seq], 1)
         bert = bert.unsqueeze(0)
@@ -101,6 +109,8 @@ class T2SModel(nn.Module):
         self.vits_model = vits_model.vq_model
         self.hz = 50
         self.max_sec = self.config["data"]["max_sec"]
+        if debug_trace:
+            self.config["inference"]["top_k"] = 1
         self.t2s_model.model.top_k = torch.LongTensor([self.config["inference"]["top_k"]])
         self.t2s_model.model.early_stop_num = torch.LongTensor([self.hz * self.max_sec])
         self.t2s_model = self.t2s_model.model
@@ -112,6 +122,12 @@ class T2SModel(nn.Module):
 
     def forward(self, ref_seq, text_seq, ref_bert, text_bert, ssl_content, debug=False):
         early_stop_num = self.t2s_model.early_stop_num
+
+        if debug_dump:
+            print(ref_seq)
+            print(text_seq)
+            print(ref_bert)
+            print(text_bert)
 
         if debug:
             import onnxruntime
@@ -126,6 +142,9 @@ class T2SModel(nn.Module):
             prompts = torch.from_numpy(prompts)
         else:
             x, prompts = self.onnx_encoder(ref_seq, text_seq, ref_bert, text_bert, ssl_content)
+            if debug_dump:
+                print("onnx_encoder x", x)
+                print("onnx_encoder prompts", prompts)
 
         prefix_len = prompts.shape[1]
 
@@ -159,10 +178,11 @@ class T2SModel(nn.Module):
             if torch.argmax(logits, dim=-1)[0] == self.t2s_model.EOS or samples[0, 0] == self.t2s_model.EOS:
                 stop = True
             if stop:
+                print(f"T2S Decoding EOS [{prefix_len} -> {y.shape[1]}]")
                 break
         y[0, -1] = 0
 
-        return y[:, -idx:].unsqueeze(0)
+        return y[:, -idx:-1].unsqueeze(0) # added -1 for matching torch
 
     def export(self, ref_seq, text_seq, ref_bert, text_bert, ssl_content, project_name, dynamo=False):
         #self.onnx_encoder = torch.jit.script(self.onnx_encoder)
@@ -251,6 +271,9 @@ class VitsModel(nn.Module):
             self.hps.data.win_length,
             center=False
         )
+        if debug_dump:
+            print("refer", refer)
+            print("phones2", text_seq)
         return self.vq_model(pred_semantic, text_seq, refer)[0, 0]
 
 
@@ -262,7 +285,11 @@ class GptSoVits(nn.Module):
     
     def forward(self, ref_seq, text_seq, ref_bert, text_bert, ref_audio, ssl_content, debug=False):
         pred_semantic = self.t2s(ref_seq, text_seq, ref_bert, text_bert, ssl_content, debug)
+        if debug_dump:
+            print("pred_semantic", pred_semantic)
         audio = self.vits(text_seq, pred_semantic, ref_audio)
+        if debug_dump:
+            print("audio", audio)
         if debug:
             import onnxruntime
             sess = onnxruntime.InferenceSession("onnx/nahida/nahida_vits.onnx", providers=["CPU"])
@@ -336,28 +363,40 @@ def export(vits_path, gpt_path, project_name):
     #text_seq = torch.LongTensor([cleaned_text_to_sequence(["w", "o3", "sh", "i4", "b", "ai2", "y", "e4", "w", "o3", "sh", "i4", "b", "ai2", "y", "e4", "w", "o3", "sh", "i4", "b", "ai2", "y", "e4"])])
 
     ref_seq = torch.LongTensor([cleaned_text_to_sequence(['m', 'i', 'z', 'u', 'o', 'm', 'a', 'r', 'e', 'e', 'sh', 'i', 'a', 'k', 'a', 'r', 'a', 'k', 'a', 'w', 'a', 'n', 'a', 'k', 'U', 't', 'e', 'w', 'a', 'n', 'a', 'r', 'a', 'n', 'a', 'i', '.'])])
-    text_seq = torch.LongTensor([cleaned_text_to_sequence(['m', 'i', 'z', 'u', 'w', 'a', ',', 'i', 'r', 'i', 'm', 'a', 's', 'e', 'N', 'k', 'a', '?'])])
+    text_seq = torch.LongTensor([cleaned_text_to_sequence(['y', 'u', 'z', 'u', 'k', 'i', 'y', 'u', 'k', 'a', 'r', 'i', 'g', 'a', 's', 'U', 'k', 'i', 'd', 'a', '!'])])
     
-    ref_seq = torch.LongTensor([cleaned_text_to_sequence(['a', 'a', 'r', 'u', 'b', 'u', 'i', 'sh', 'i', 'i', 'o', 'sh', 'i', 'y', 'o', 'o', 'sh', 'I', 't', 'a', 'b', 'o', 'i', 's', 'U', 'ch', 'e', 'N', 'j', 'a', 'a', 'o', 'ts', 'U', 'k', 'u', 'r', 'u', '.'])])
-    text_seq = torch.LongTensor([cleaned_text_to_sequence(['ky', 'o', 'o', 'w', 'a', 'h', 'a', 'r', 'e', 'd', 'e', 'sh', 'o', 'o', 'k', 'a', '?'])])
+    #ref_seq = torch.LongTensor([cleaned_text_to_sequence(['a', 'a', 'r', 'u', 'b', 'u', 'i', 'sh', 'i', 'i', 'o', 'sh', 'i', 'y', 'o', 'o', 'sh', 'I', 't', 'a', 'b', 'o', 'i', 's', 'U', 'ch', 'e', 'N', 'j', 'a', 'a', 'o', 'ts', 'U', 'k', 'u', 'r', 'u', '.'])])
+    #text_seq = torch.LongTensor([cleaned_text_to_sequence(['ky', 'o', 'o', 'w', 'a', 'h', 'a', 'r', 'e', 'd', 'e', 'sh', 'o', 'o', 'k', 'a', '?'])])
    
-    ref_bert = torch.randn((ref_seq.shape[1], 1024)).float()
-    text_bert = torch.randn((text_seq.shape[1], 1024)).float()
-    ref_audio = torch.randn((1, 48000 * 5)).float()
+    ref_bert = torch.zeros((ref_seq.shape[1], 1024)).float()
+    text_bert = torch.zeros((text_seq.shape[1], 1024)).float()
+    ref_audio = torch.zeros((1, 48000 * 5)).float()
 
-    ref_audio = torch.tensor([load_audio("kyakuno.wav", 48000)]).float()
+    ref_audio = torch.tensor([load_audio("JSUT.wav", 48000)]).float()
     ref_audio_16k = torchaudio.functional.resample(ref_audio,48000,16000).float()
     ref_audio_sr = torchaudio.functional.resample(ref_audio,48000,vits.hps.data.sampling_rate).float()
+
+    import numpy as np
+    import librosa
+    zero_wav = np.zeros(
+        int(vits.hps.data.sampling_rate * 0.3),
+        dtype=np.float32,
+    )
+    wav16k, sr = librosa.load("JSUT.wav", sr=16000)
+    wav16k = torch.from_numpy(wav16k)
+    zero_wav_torch = torch.from_numpy(zero_wav)
+    wav16k = torch.cat([wav16k, zero_wav_torch]).unsqueeze(0)
+    ref_audio_16k = wav16k # hubertの入力のみpaddingする
+    #ref_audio_sr = torchaudio.functional.resample(ref_audio_16k,16000,vits.hps.data.sampling_rate).float()
 
     try:
         os.mkdir(f"onnx/{project_name}")
     except:
         pass
 
-    onnx_export = False
-    onnx_import = True
-
     ssl_content = ssl(ref_audio_16k, debug=onnx_import).float()
+    if debug_dump:
+        print("ssl_content", ssl_content)
 
     if onnx_import:
         a, b = gpt_sovits(ref_seq, text_seq, ref_bert, text_bert, ref_audio_sr, ssl_content, debug=onnx_import)

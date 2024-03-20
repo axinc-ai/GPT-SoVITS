@@ -33,6 +33,8 @@ default_config = {
     "EOS": 1024,
 }
 
+debug_dump = True
+debug_trace = True # 完全一致のためにtopKを1に固定する
 
 class Text2SemanticDecoder(nn.Module):
     def __init__(self, config, norm_first=False, top_k=3):
@@ -331,9 +333,17 @@ class Text2SemanticDecoder(nn.Module):
         early_stop_num: int = -1,
         temperature: float = 1.0,
     ):
+        if debug_dump:
+            print("input token x", x)
         x = self.ar_text_embedding(x)
+        if debug_dump:
+            print("ar_text_embedding x", x)
         x = x + self.bert_proj(bert_feature.transpose(1, 2))
+        if debug_dump:
+            print("bert_proj x", x)
         x = self.ar_text_position(x)
+        if debug_dump:
+            print("onnx_encoder x", x)
 
         # AR Decoder
         y = prompts
@@ -395,9 +405,16 @@ class Text2SemanticDecoder(nn.Module):
             # samples = topk_sampling(logits, top_k=top_k, top_p=1.0, temperature=temperature)
             if(idx==0):###第一次跑不能EOS否则没有了
                 logits = logits[:, :-1]  ###刨除1024终止符号的概率
+            if debug_trace:
+                top_k = 1
             samples = sample(
                 logits[0], y, top_k=top_k, top_p=top_p, repetition_penalty=1.35, temperature=temperature
             )[0].unsqueeze(0)
+            if idx < 3 and debug_dump:
+                print("-------", idx)
+                print("logits.shape", logits[0].shape)
+                print("logits", logits[0])
+                print("samples", samples)
             # 本次生成的 semantic_ids 和之前的 y 构成新的 y
             # print(samples.shape)#[1,1]#第一个1是bs
             y = torch.concat([y, samples], dim=1) 
