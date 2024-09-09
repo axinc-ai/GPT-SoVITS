@@ -185,7 +185,7 @@ change_gpt_weights(gpt_path)
 
 def get_spepc(hps, filename):
     #audio = load_audio(filename, int(hps.data.sampling_rate))
-    audio, sr = librosa.load(filename, sr=16000)
+    audio, sr = librosa.load(filename, sr=hps.data.sampling_rate)
     audio = torch.FloatTensor(audio)
     audio_norm = audio
     audio_norm = audio_norm.unsqueeze(0)
