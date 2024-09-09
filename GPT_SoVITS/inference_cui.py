@@ -184,7 +184,8 @@ change_gpt_weights(gpt_path)
 
 
 def get_spepc(hps, filename):
-    audio = load_audio(filename, int(hps.data.sampling_rate))
+    #audio = load_audio(filename, int(hps.data.sampling_rate))
+    audio, sr = librosa.load(filename, sr=16000)
     audio = torch.FloatTensor(audio)
     audio_norm = audio
     audio_norm = audio_norm.unsqueeze(0)
@@ -330,8 +331,8 @@ def get_tts_wav(ref_wav_path, prompt_text, prompt_language, text, text_language,
 
     with torch.no_grad():
         wav16k, sr = librosa.load(ref_wav_path, sr=16000)
-        if (wav16k.shape[0] > 160000 or wav16k.shape[0] < 48000):
-            raise OSError(i18n("参考音频在3~10秒范围外，请更换！"))
+        #if (wav16k.shape[0] > 160000 or wav16k.shape[0] < 48000):
+        #    raise OSError(i18n("参考音频在3~10秒范围外，请更换！"))
         wav16k = torch.from_numpy(wav16k)
         zero_wav_torch = torch.from_numpy(zero_wav)
         if is_half == True:
@@ -634,20 +635,24 @@ with gr.Blocks(title="GPT-SoVITS WebUI") as app:
 #    quiet=True,
 #)
 
-inp_ref = "JSUT.wav"
+inp_ref = "reference_audio_captured_by_ax.wav"
 prompt_text = "水をマレーシアから買わなくてはならない。"
 #inp_ref = "kyakuno.wav"
 #prompt_text = "RVCを使用したボイスチェンジャーを作る。"
 prompt_language = i18n("日文")
 #text = "水は、いりませんか？"
-text = "ゆずきゆかりが好きだ！"
+text = "ax株式会社ではAIの実用化のための技術を開発しています。"
 text_language = i18n("日文")
 how_to_cut = i18n("凑四句一切")
 top_k = 5
 top_p = 1
 temperature = 1
 ref_text_free = False
+import time
+start = int(round(time.time() * 1000))
 output = get_tts_wav(inp_ref, prompt_text, prompt_language, text, text_language, how_to_cut, top_k, top_p, temperature, ref_text_free)
+end = int(round(time.time() * 1000))
+print("\t processing time {} ms".format(end-start))
 # get_tts_wavのyieldをreturnに書き換える
 print(output)
 import soundfile as sf
